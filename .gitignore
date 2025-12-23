@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Virtual env
+.venv/
+venv/
+
+# Data outputs
+data/
+*.mseed
+*.stationxml
+*.png
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Env / secrets
+.env
+.env.*
