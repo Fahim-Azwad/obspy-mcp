@@ -1,3 +1,12 @@
+"""Gemini-powered research agent that drives ObsPy MCP tools.
+
+This script:
+- Starts the local MCP server over stdio
+- Calls deterministic tools to fetch/process seismic data
+- Uses Gemini to generate a scientific interpretation of results
+"""
+
+# Standard library: CLI parsing, async, JSON, env vars, and time helpers.
 import argparse
 import asyncio
 import json
@@ -7,23 +16,33 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+# Gemini SDK (Google GenAI) for the final scientific narrative.
 from google import genai
 
+# Loads environment variables from a local .env file (keeps secrets out of git).
 from dotenv import load_dotenv
 
+# MCP client: talk to the local server subprocess via stdin/stdout.
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 
+# Resolve the repository root (used for cwd when starting the MCP server).
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-# Load local environment variables (keeps secrets out of git via .gitignore)
+# Load local environment variables so secrets stay in .env, not git.
 load_dotenv(PROJECT_ROOT / ".env")
 
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "models/gemini-2.5-flash")  # cheaper + fast
-FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "models/gemini-2.5-pro")  # stronger
+# Model selection: default (fast/cheap) + fallback (stronger) if the default fails.
+DEFAULT_MODEL = os.getenv(
+    "GEMINI_MODEL", "models/gemini-2.5-flash"
+)  # fast/cheap default
+FALLBACK_MODEL = os.getenv(
+    "GEMINI_FALLBACK_MODEL", "models/gemini-2.5-pro"
+)  # stronger backup
 
 
+# High-level agent rules (used as a prompt template / guardrails).
 INSTRUCTIONS = """
 You are a seismology research assistant that MUST use the MCP tools provided.
 
@@ -46,6 +65,10 @@ Rules:
 
 
 def get_api_key() -> str:
+    """Get Gemini API key from environment.
+
+    Prefers GOOGLE_API_KEY (new convention) but accepts GEMINI_API_KEY.
+    """
     key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not key:
         raise RuntimeError(
@@ -55,6 +78,11 @@ def get_api_key() -> str:
 
 
 def build_prompt(user_request: str, tools: Dict[str, Any]) -> str:
+    """Build a tool-aware prompt template.
+
+    Note: In this version the pipeline is mostly deterministic; this is kept
+    for debugging/future extension where Gemini drives tool selection.
+    """
     return f"""
 {INSTRUCTIONS}
 
@@ -82,6 +110,10 @@ Return a concise, structured final answer.
 async def call_tool(
     session: ClientSession, name: str, args: Dict[str, Any]
 ) -> Dict[str, Any]:
+    """Call an MCP tool and parse its JSON response.
+
+    Our MCP server returns JSON as text; this validates that expectation.
+    """
     res = await session.call_tool(name, args)
 
     raw = ""
@@ -100,17 +132,25 @@ async def call_tool(
 
 
 def genai_generate(client: genai.Client, model_name: str, prompt: str) -> str:
+    """Generate a plain-text response using the Gemini model."""
     resp = client.models.generate_content(model=model_name, contents=prompt)
     return (resp.text or "").strip()
 
 
 def iso_window_last_n_days(days: int = 90) -> Dict[str, str]:
+    """Create an ISO8601 start/end window for recent-event searches."""
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
     return {"starttime": start.isoformat(), "endtime": end.isoformat()}
 
 
 async def main() -> None:
+    """Main entrypoint.
+
+    Runs an end-to-end workflow:
+    event search -> station search -> validate -> download -> process -> explain.
+    """
+    # CLI arguments let you provide a natural-language request and a provider hint.
     parser = argparse.ArgumentParser(description="ObsPy MCP + Gemini Agent Runner")
     parser.add_argument(
         "--prompt",
@@ -125,22 +165,28 @@ async def main() -> None:
     )
     args = parser.parse_args()
 
+    # Initialize Gemini client for scientific interpretation at the end.
     key = get_api_key()
     client = genai.Client(api_key=key)
 
+    # Start MCP server as a subprocess (stdio transport) using the same interpreter.
     server_params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "server.server"],
         cwd=str(PROJECT_ROOT),
     )
 
+    # Connect to the MCP server over stdin/stdout.
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
+            # MCP handshake.
             await session.initialize()
 
+            # Discover available tool names.
             tools_resp = await session.list_tools()
             tools = {t.name: t for t in tools_resp.tools}
 
+            # Fail fast if the server doesn't expose the tools we depend on.
             required = {
                 "search_events",
                 "search_stations",
@@ -156,11 +202,11 @@ async def main() -> None:
                     f"Fix server/server.py tool registration."
                 )
 
+            # Build a debug prompt template (not executed as an LLM-driven tool planner yet).
             user_request = f"Default provider: {args.provider}\nRequest: {args.prompt}"
-            _ = build_prompt(
-                user_request, tools
-            )  # kept for debugging / future improvements
+            _ = build_prompt(user_request, tools)
 
+            # Deterministic event search: last 90 days, magnitude >= 7.
             window = iso_window_last_n_days(days=90)
             event_search_kwargs = {
                 "starttime": window["starttime"],
@@ -169,10 +215,12 @@ async def main() -> None:
                 "orderby": "time",
             }
 
+            # Provider fallback strategy (try requested provider first).
             providers_to_try = [args.provider] + [
                 p for p in ["IRIS", "USGS", "EMSC"] if p != args.provider
             ]
 
+            # Find at least one matching event from the first provider that returns results.
             events_resp: Optional[Dict[str, Any]] = None
             chosen_provider: Optional[str] = None
             for prov in providers_to_try:
@@ -191,8 +239,9 @@ async def main() -> None:
                     "No M7+ events found in last 90 days from IRIS/USGS/EMSC."
                 )
 
+            # Select the newest event (API returns newest-first).
             provider = chosen_provider or args.provider
-            chosen = events_resp["events"][0]  # newest-first
+            chosen = events_resp["events"][0]
             print(
                 f"\nChosen event: M{chosen.get('magnitude')} {chosen.get('description')} @ {chosen.get('time')}\n"
             )
@@ -203,7 +252,7 @@ async def main() -> None:
             if ev_time is None or ev_lat is None or ev_lon is None:
                 raise RuntimeError(f"Chosen event missing required fields: {chosen}")
 
-            # Station search
+            # Find nearby broadband stations (BH? within 2 degrees).
             stations_resp = await call_tool(
                 session,
                 "search_stations",
@@ -228,7 +277,7 @@ async def main() -> None:
                 f"Found {len(stations)} station candidates within 2° using channel=BH?\n"
             )
 
-            # Time window: 5 min before to 30 min after
+            # Build a waveform time window: 5 minutes before -> 30 minutes after event.
             from obspy import UTCDateTime
 
             t0 = UTCDateTime(ev_time)
@@ -240,7 +289,7 @@ async def main() -> None:
             used_station: Optional[Dict[str, Any]] = None
             last_waveform_error: Optional[str] = None
 
-            # Try multiple stations in case of 204/no data
+            # Try a few stations in case some return no data (HTTP 204).
             for station in stations[:25]:
                 net = station.get("network")
                 sta = station.get("station")
@@ -256,11 +305,13 @@ async def main() -> None:
                     "endtime": endtime,
                 }
 
+                # Validate before downloading (enforces safety limits on the server).
                 val = await call_tool(session, "validate_only", {"kwargs": wf_kwargs})
                 if not val.get("ok", True):
                     print(f"❌ Validation denied for {net}.{sta}: {val.get('error')}")
                     continue
 
+                # Download waveforms (MiniSEED).
                 wf = await call_tool(
                     session,
                     "download_waveforms",
@@ -282,6 +333,7 @@ async def main() -> None:
                     f"✅ Downloaded waveforms: {waveform_file} from {net}.{sta} (BH?)\n"
                 )
 
+                # Download StationXML at response level (required for response removal).
                 sx = await call_tool(
                     session,
                     "download_stations",
@@ -312,6 +364,7 @@ async def main() -> None:
                     )
                 )
 
+            # Deterministic processing pipeline on the server (detrend/filter/response/pick/plot).
             processed = await call_tool(
                 session,
                 "full_process",
@@ -323,6 +376,7 @@ async def main() -> None:
 
             net = used_station["network"]
             sta = used_station["station"]
+            # Ask Gemini to interpret the processed artifacts scientifically.
             explain_prompt = f"""
 Event:
 {json.dumps(chosen, indent=2)}
@@ -343,6 +397,7 @@ Explain:
 Keep it clear and seismology-correct.
 """
 
+            # Model fallback improves reliability under quota/model errors.
             try:
                 explanation = genai_generate(client, DEFAULT_MODEL, explain_prompt)
             except Exception:
@@ -353,4 +408,5 @@ Keep it clear and seismology-correct.
 
 
 if __name__ == "__main__":
+    # Run the async pipeline when executed as a script.
     asyncio.run(main())
