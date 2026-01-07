@@ -136,18 +136,24 @@ Choose: `.../obspy-mcp/.venv/bin/python`
 
 ### Gemini (recommended default)
 
-Set your Gemini key:
+**Recommended:** use a local `.env` file (loaded automatically by the agent).
+
 ```bash
-export GOOGLE_API_KEY="YOUR_REAL_GEMINI_KEY"
+cp .env.example .env
 ```
 
-Optional (model override):
-```bash
-export GEMINI_MODEL="models/gemini-2.5-pro"
-```
+Then edit `.env` and set at least:
 
-If you only have one key, just set `GOOGLE_API_KEY`.
-If you want, you can also set `GEMINI_API_KEY` equal to the same value — the agent will pick one.
+- `GOOGLE_API_KEY=...` (preferred)
+  - or `GEMINI_API_KEY=...`
+
+Optional overrides:
+
+- `GEMINI_MODEL=models/gemini-2.5-flash` (default)
+- `GEMINI_FALLBACK_MODEL=models/gemini-2.5-pro`
+- `FDSN_PROVIDER=IRIS`
+
+You can also export env vars in your shell instead of using `.env`.
 
 ### Azure OpenAI (optional / future-ready)
 
@@ -173,7 +179,13 @@ python -m server.server
 
 ### Run the Gemini Research Agent (recommended)
 ```bash
-python -m agent.gemini_agent
+python -m agent.gemini_agent -p "Find a recent magnitude 7+ earthquake and analyze BH? waveforms."
+```
+
+Optional:
+
+```bash
+python -m agent.gemini_agent -p "..." --provider IRIS
 ```
 
 The agent will:
@@ -185,6 +197,25 @@ The agent will:
 
 ---
 
+## How the MCP Agent Fetches Data
+
+The agent is **not** a web-scraper. It launches the MCP server locally (stdio transport) and calls deterministic MCP tools.
+
+Pipeline in this version:
+
+1. Start the MCP server: `python -m server.server`
+2. Discover tool list via `list_tools`
+3. Fetch a recent large event (last 90 days, $M\ge7$)
+4. Search stations within 2° using `BH?`
+5. Validate the waveform request with `validate_only`
+6. Download waveforms + StationXML
+7. Run `full_process` to generate processed MiniSEED + PNG quicklook
+8. Ask Gemini for a **scientific interpretation** of the resulting artifacts
+
+Note: the `--prompt` text is currently used primarily for the **final explanation**. Event/station selection follows the deterministic defaults above.
+
+---
+
 ## MCP Tools
 
 These are exposed by the server through MCP:
@@ -193,6 +224,7 @@ These are exposed by the server through MCP:
 |------|-------------|
 | `search_events` | Find earthquakes by time window, magnitude, bounds |
 | `search_stations` | Find stations by radius or bounds, channel patterns |
+| `validate_only` | Validate + estimate a waveform request before downloading |
 | `download_waveforms` | Download waveforms (MiniSEED) safely |
 | `download_stations` | Download StationXML for response removal |
 | `full_process` | Detrend → filter → remove response → pick → plot |
