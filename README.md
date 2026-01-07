@@ -3,7 +3,7 @@
 
 ## A Modular Seismology Research Server with LLM-Driven Analysis (MCP + ObsPy + Gemini/Azure-ready)
 
-> **Project submission for the Department of Earth & Planetary Science, University of California, Berkeley**
+> **Project in collaboration with University of California, Berkeley**
 
 ObsPy MCP is a production-focused seismology research toolkit that combines:
 
@@ -289,8 +289,8 @@ MIT — free for research and commercial use.
 ---
 
 ## Author
-
-**Fahim Azwad**
+**S M Azwad Ul Alam**  
 Seismology • AI Systems • Research Infrastructure
 
-*Project submission for the Department of Earth & Planetary Science, University of California, Berkeley*
+Project built at the request of **Professor Weiqiang Zhu, Department of Earth & Planetary Science, UC Berkeley**
+
