@@ -9,11 +9,16 @@ from typing import Any, Dict, Optional
 
 from google import genai
 
+from dotenv import load_dotenv
+
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+# Load local environment variables (keeps secrets out of git via .gitignore)
+load_dotenv(PROJECT_ROOT / ".env")
 
 DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "models/gemini-2.5-flash")  # cheaper + fast
 FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "models/gemini-2.5-pro")  # stronger
