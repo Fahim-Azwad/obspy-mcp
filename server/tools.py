@@ -25,16 +25,12 @@ from server.picking import pick_p
 from server.plotting import plot_stream
 
 
-# ---------------------------------------------------------------------
 # Storage
-# ---------------------------------------------------------------------
 DATA = Path(settings.DATA_DIR)
 DATA.mkdir(parents=True, exist_ok=True)
 
 
-# ---------------------------------------------------------------------
 # Utilities
-# ---------------------------------------------------------------------
 def _hash(obj: Any) -> str:
     """Deterministic short hash for filenames."""
     return hashlib.sha256(
@@ -61,9 +57,7 @@ def _err(msg: str) -> Dict[str, Any]:
     return {"ok": False, "error": msg}
 
 
-# ---------------------------------------------------------------------
 # TOOLS
-# ---------------------------------------------------------------------
 def search_events(provider: str, kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """
     Search earthquake events and return compact summaries.
