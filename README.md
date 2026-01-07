@@ -182,6 +182,31 @@ python -m server.server
 python -m agent.gemini_agent -p "Find a recent magnitude 7+ earthquake and analyze BH? waveforms."
 ```
 
+### Prompt Hints (to maximize automation)
+
+The agent is deterministic, but it can extract a few **simple hints** from `--prompt` to override defaults:
+
+- **Minimum magnitude**: `M7+`, `M6.5+`, `magnitude >= 7`
+- **Event lookback window**: `last 30 days`, `past 2 weeks`, `last 3 months`
+- **Station search radius**: `within 3°`, `within 300 km`, `radius 5 degrees`
+
+If no hints are present, the defaults are: **M7+**, **last 90 days**, **within 2°**.
+
+Copy/paste examples:
+
+```bash
+# Smaller events, shorter window (faster searches)
+python -m agent.gemini_agent -p "Find M6.5+ earthquakes in the last 14 days and use stations within 250 km"
+
+# Wider station search if you frequently get HTTP 204 (no data)
+python -m agent.gemini_agent -p "Find M7+ earthquakes in the last 60 days and use stations within 5°"
+
+# Very large events with broader window
+python -m agent.gemini_agent -p "Find M8+ earthquakes in the last 6 months and use stations within 3°"
+```
+
+Tip: a good prompt usually includes (1) event constraints, (2) station radius, and (3) what you want explained (e.g., P vs S arrivals, surface waves, filtering, response removal).
+
 You can optionally include simple hints in the prompt to override defaults:
 
 ```bash
@@ -197,8 +222,8 @@ python -m agent.gemini_agent -p "..." --provider IRIS
 ```
 
 The agent will:
-1. Find a recent M7+ event
-2. Find nearby broadband stations (BH?)
+1. Find a recent large event (defaults: last 90 days, $M\ge7$)
+2. Find nearby broadband stations (BH?) around the event (default radius 2°)
 3. Download waveforms + StationXML
 4. Process and plot results
 5. Output a scientific interpretation
@@ -221,6 +246,8 @@ Pipeline in this version:
 8. Ask Gemini for a **scientific interpretation** of the resulting artifacts
 
 Note: the `--prompt` text is currently used primarily for the **final explanation**. Event/station selection follows the deterministic defaults above.
+
+Update: `--prompt` can also override **min magnitude**, **event lookback window**, and **station radius** when you include simple hint phrases (see “Prompt Hints” above). Other choices (channel `BH?`, waveform window, processing steps) remain deterministic defaults.
 
 ---
 
