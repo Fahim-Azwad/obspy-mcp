@@ -1,9 +1,4 @@
 # Seismology & Data Processing
-# ObsPy provides the FDSN (Federation of Digital Seismograph Networks) client
-# which connects to data centers like IRIS, USGS, GFZ to fetch:
-#   - Earthquake catalogs (events, magnitudes, locations)
-#   - Station metadata (coordinates, instrument response)
-#   - Waveform data (seismograms in MiniSEED format)
 obspy>=1.4.2              # Core seismology library (FDSN client, waveform processing, signal analysis)
 numpy>=1.24               # Numerical computing for array operations
 matplotlib>=3.7           # Plotting waveforms and seismograms
