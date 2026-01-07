@@ -1,0 +1,1 @@
+"""ObsPy MCP server package."""
