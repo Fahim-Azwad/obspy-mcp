@@ -1,0 +1,21 @@
+# Seismology & Data Processing
+# ObsPy provides the FDSN (Federation of Digital Seismograph Networks) client
+# which connects to data centers like IRIS, USGS, GFZ to fetch:
+#   - Earthquake catalogs (events, magnitudes, locations)
+#   - Station metadata (coordinates, instrument response)
+#   - Waveform data (seismograms in MiniSEED format)
+obspy>=1.4.2              # Core seismology library (FDSN client, waveform processing, signal analysis)
+numpy>=1.24               # Numerical computing for array operations
+matplotlib>=3.7           # Plotting waveforms and seismograms
+
+# MCP (Model Context Protocol)
+mcp>=1.25.0               # MCP server/client for LLM tool integration
+
+# Gemini AI Agent
+google-genai>=0.7.0       # Google Gemini API for LLM-powered research agent
+
+# Utilities
+python-dotenv>=1.0.0      # Load environment variables from .env files
+anyio>=4.0.0              # Async I/O compatibility layer
+httpx>=0.27.0             # Async HTTP client for API requests
+
