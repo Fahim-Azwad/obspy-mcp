@@ -182,6 +182,14 @@ python -m server.server
 python -m agent.gemini_agent -p "Find a recent magnitude 7+ earthquake and analyze BH? waveforms."
 ```
 
+You can optionally include simple hints in the prompt to override defaults:
+
+```bash
+python -m agent.gemini_agent -p "Find M6.5+ earthquakes in the last 30 days and use stations within 3°"
+```
+
+Supported hint patterns (case-insensitive): `M7+`, `last 30 days` / `past 2 weeks`, `within 300 km` / `within 3°`.
+
 Optional:
 
 ```bash

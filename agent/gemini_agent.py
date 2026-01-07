@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -40,6 +41,12 @@ DEFAULT_MODEL = os.getenv(
 FALLBACK_MODEL = os.getenv(
     "GEMINI_FALLBACK_MODEL", "models/gemini-2.5-pro"
 )  # stronger backup
+
+
+# Default deterministic search parameters (can be overridden via prompt hints).
+DEFAULT_EVENT_LOOKBACK_DAYS = 90
+DEFAULT_MIN_MAGNITUDE = 7.0
+DEFAULT_STATION_RADIUS_DEG = 2.0
 
 
 # High-level agent rules (used as a prompt template / guardrails).
@@ -144,6 +151,86 @@ def iso_window_last_n_days(days: int = 90) -> Dict[str, str]:
     return {"starttime": start.isoformat(), "endtime": end.isoformat()}
 
 
+def parse_prompt_overrides(prompt: str) -> Dict[str, float]:
+    """Parse optional search overrides from a natural-language prompt.
+
+    Supported patterns (case-insensitive):
+    - Magnitude: "M7+", "M6.5", "magnitude >= 7"
+    - Time window: "last 30 days", "past 2 weeks", "last 3 months"
+    - Radius: "within 3°", "within 3 degrees", "within 300 km"
+
+    Returns a dict with zero or more of:
+    - min_magnitude (float)
+    - event_lookback_days (float)
+    - station_radius_deg (float)
+    """
+
+    text = (prompt or "").lower()
+    overrides: Dict[str, float] = {}
+
+    # Magnitude thresholds.
+    mag_match = re.search(r"\bm\s*([0-9]+(?:\.[0-9]+)?)\s*\+?\b", text)
+    if not mag_match:
+        mag_match = re.search(
+            r"\bmag(?:nitude)?\s*(?:>=|>|at\s*least)\s*([0-9]+(?:\.[0-9]+)?)\b",
+            text,
+        )
+    if mag_match:
+        try:
+            mag = float(mag_match.group(1))
+            overrides["min_magnitude"] = max(0.0, min(mag, 10.0))
+        except ValueError:
+            pass
+
+    # Event lookback window.
+    time_match = re.search(
+        r"\b(?:last|past)\s+(\d+)\s*(hours?|days?|weeks?|months?|years?)\b",
+        text,
+    )
+    if time_match:
+        n = int(time_match.group(1))
+        unit = time_match.group(2)
+        days = None
+        if unit.startswith("hour"):
+            days = n / 24.0
+        elif unit.startswith("day"):
+            days = float(n)
+        elif unit.startswith("week"):
+            days = float(n * 7)
+        elif unit.startswith("month"):
+            days = float(n * 30)
+        elif unit.startswith("year"):
+            days = float(n * 365)
+        if days is not None:
+            overrides["event_lookback_days"] = max(1.0, min(days, 3650.0))
+
+    # Station radius: degrees or kilometers.
+    deg_match = re.search(
+        r"\b(?:within|radius)\s+(\d+(?:\.[0-9]+)?)\s*(?:°|deg|degree|degrees)\b",
+        text,
+    )
+    km_match = re.search(
+        r"\b(?:within|radius)\s+(\d+(?:\.[0-9]+)?)\s*(?:km|kilometer|kilometers)\b",
+        text,
+    )
+    if deg_match:
+        try:
+            deg = float(deg_match.group(1))
+            overrides["station_radius_deg"] = max(0.1, min(deg, 20.0))
+        except ValueError:
+            pass
+    elif km_match:
+        try:
+            km = float(km_match.group(1))
+            # Approx conversion: 1 degree ~ 111 km.
+            deg = km / 111.0
+            overrides["station_radius_deg"] = max(0.1, min(deg, 20.0))
+        except ValueError:
+            pass
+
+    return overrides
+
+
 async def main() -> None:
     """Main entrypoint.
 
@@ -164,6 +251,23 @@ async def main() -> None:
         help="Default FDSN provider: IRIS/USGS/EMSC (default IRIS)",
     )
     args = parser.parse_args()
+
+    # Optional prompt-driven overrides (keeps behavior deterministic).
+    overrides = parse_prompt_overrides(args.prompt)
+    min_magnitude = overrides.get("min_magnitude", DEFAULT_MIN_MAGNITUDE)
+    event_lookback_days = int(
+        overrides.get("event_lookback_days", float(DEFAULT_EVENT_LOOKBACK_DAYS))
+    )
+    station_radius_deg = overrides.get(
+        "station_radius_deg", DEFAULT_STATION_RADIUS_DEG
+    )
+    if overrides:
+        print(
+            "Using prompt overrides: "
+            f"min_magnitude={min_magnitude}, "
+            f"event_lookback_days={event_lookback_days}, "
+            f"station_radius_deg={station_radius_deg}"
+        )
 
     # Initialize Gemini client for scientific interpretation at the end.
     key = get_api_key()
@@ -206,12 +310,12 @@ async def main() -> None:
             user_request = f"Default provider: {args.provider}\nRequest: {args.prompt}"
             _ = build_prompt(user_request, tools)
 
-            # Deterministic event search: last 90 days, magnitude >= 7.
-            window = iso_window_last_n_days(days=90)
+            # Deterministic event search (defaults can be overridden by prompt hints).
+            window = iso_window_last_n_days(days=event_lookback_days)
             event_search_kwargs = {
                 "starttime": window["starttime"],
                 "endtime": window["endtime"],
-                "minmagnitude": 7.0,
+                "minmagnitude": float(min_magnitude),
                 "orderby": "time",
             }
 
@@ -252,7 +356,7 @@ async def main() -> None:
             if ev_time is None or ev_lat is None or ev_lon is None:
                 raise RuntimeError(f"Chosen event missing required fields: {chosen}")
 
-            # Find nearby broadband stations (BH? within 2 degrees).
+            # Find nearby broadband stations (BH? within a radius around the event).
             stations_resp = await call_tool(
                 session,
                 "search_stations",
@@ -261,7 +365,7 @@ async def main() -> None:
                     "kwargs": {
                         "latitude": ev_lat,
                         "longitude": ev_lon,
-                        "maxradius": 2.0,
+                        "maxradius": float(station_radius_deg),
                         "channel": "BH?",
                         "level": "station",
                     },
@@ -270,11 +374,11 @@ async def main() -> None:
             stations = stations_resp.get("stations") or []
             if not stations:
                 raise RuntimeError(
-                    "No stations found within 2° (BH?). Try increasing radius."
+                    f"No stations found within {station_radius_deg}° (BH?). Try increasing radius."
                 )
 
             print(
-                f"Found {len(stations)} station candidates within 2° using channel=BH?\n"
+                f"Found {len(stations)} station candidates within {station_radius_deg}° using channel=BH?\n"
             )
 
             # Build a waveform time window: 5 minutes before -> 30 minutes after event.
